@@ -1,84 +1,121 @@
-// Include library yang diperlukan
-#include <Arduino.h>
-#include <ESP8266WiFi.h>
-#include <ESP8266WiFiMulti.h>
-#include <ESP8266HTTPClient.h>
- 
-// Gunakan serial sebagai monitor
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <HTTPUpdate.h>
+#include <SimpleTimer.h>
+
+
 #define USE_SERIAL Serial
+const int trigPin = 26;
+const int echoPin = 27;
+
+
  
 // Buat object Wifi
-ESP8266WiFiMulti WiFiMulti;
- 
-// Buat object http
+const char* ssid = "didinx";
+const char* password =  "qwaszx23";
+
+
 HTTPClient http;
- 
-// Deklarasikan variable untuk suhu
-float vref = 3.3;
-float resolusi = vref*100/1023;
-float suhu;
+String url = "http://3.89.128.93/smarttrash/Api?id=";
 String payload;
- 
-// Ini adalah alamat script (URL) yang kita pasang di web server
-// Silahkan sesuaikan alamat IP dengan ip komputer anda atau alamat domain (bila di web hosting)
-// '?suhu=' adalah adalah nama parameter yang akan dikirimkan ke script PHP 
- 
-//String url = "http://192.168.43.66/demo_nodemcu/simpandata.php?suhu=";
-//String url = "http://66.42.57.140/air_monitoring/index1.php?data1=";
-String url = "http://34.68.48.177/smarttrash/Api?id=";
- 
-void setup() {
- 
-    USE_SERIAL.begin(115200);
-    USE_SERIAL.setDebugOutput(false);
- 
-    for(uint8_t t = 4; t > 0; t--) {
+
+float d1, d2, d3, d4, d5;
+long tinggi, level, average;
+long  deviasi = 10;
+long  tinggiBaks = 150;
+
+//DEEP_SLEEP interval = 5m
+int sleepInterval = 300;
+
+void setup(){
+  USE_SERIAL.begin(115200);
+  USE_SERIAL.setDebugOutput(false);
+  for(uint8_t t = 4; t > 0; t--) {
         USE_SERIAL.printf("[SETUP] Tunggu %d...\n", t);
         USE_SERIAL.flush();
         delay(1000);
+  } 
+  konekToWifi();
+  Serial.println("Levelling...");
+  tinggi = ukurTinggi();
+  average = ukurAverage();
+  Serial.println(average);
+  level = ukurLevel(average);
+  Serial.print("#Tinggi Sampah (CM) =  ");
+  Serial.println(tinggiBaks - average);
+  Serial.print("#Level (%) =  ");
+  Serial.println(level);
+  kirimData();
+  Serial.println("Goto sleep for 5 minute...");
+  gotoSleep();
+  delay(100);
+  }
+
+float ukurTinggi(){
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+  long duration, distance;
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(1000);
+  digitalWrite(trigPin, LOW);
+  duration = pulseIn(echoPin, HIGH);
+  distance = (duration / 2) / 29.1;
+  return distance;
+  }
+
+float ukurAverage(){
+  d1 = ukurTinggi();
+  delay(2000);
+  d2 = ukurTinggi();
+  delay(2000);
+  d3 = ukurTinggi();
+  delay(2000);
+  d4 = ukurTinggi();
+  delay(2000);
+  d5 = ukurTinggi();
+  return (d1 + d2 + d3 + d4 + d5)/ 5;
+  }
+
+float ukurLevel(float ukurAverage){
+  long persen;
+  persen = 100-(((ukurAverage-deviasi)*100)/tinggiBaks);
+  return persen;
+  }
+
+void konekToWifi(){
+  Serial.println("- Coba Koneksi WIFI SSID : " + String(ssid));
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
     }
- 
-    WiFi.mode(WIFI_STA);
-    WiFiMulti.addAP("wifiku", "kudalumping"); // Sesuaikan SSID dan password ini
-}
- 
-void loop() {
-    
-    // Baca suhu dari pin analog
-    suhu = analogRead(A0);
-    suhu = suhu*resolusi;
-    //----------------------
- 
-    // Cek apakah statusnya sudah terhubung
-    if((WiFiMulti.run() == WL_CONNECTED)) {
- 
-        // Tambahkan nilai suhu pada URL yang sudah kita buat
-        USE_SERIAL.print("[HTTP] Memulai...\n");
-        http.begin( url + "1" + "&ketinggian=" + 99);//+ "&data3=" + suhu+ "&data4=" + suhu+ "&data5=" + suhu+ "&data6=" + suhu+ "&data7=" + suhu+ "&data8=" + suhu+ "&data9=" + suhu+ "&data10=" + suhu ); 
-        delay(2000);
-        // Mulai koneksi dengan metode GET
-        USE_SERIAL.print("[HTTP] Melakukan GET ke server...\n");
-        int httpCode = http.GET();
- 
-        // Periksa httpCode, akan bernilai negatif kalau error
-        if(httpCode > 0) {
-            
-            // Tampilkan response http
-            USE_SERIAL.printf("[HTTP] kode response GET: %d\n", httpCode);
- 
-            // Bila koneksi berhasil, baca data response dari server
-            if(httpCode == HTTP_CODE_OK) {
-                payload = http.getString();
-                USE_SERIAL.println(payload);
-            }
- 
-        } else {
- 
-            USE_SERIAL.printf("[HTTP] GET gagal, error: %s\n", http.errorToString(httpCode).c_str());
-        }
- 
-        http.end();
+  Serial.println();
+  Serial.println("- Koneksi Sukses");
+  }
+
+void kirimData(){
+  if((WiFi.status() == WL_CONNECTED)) {
+    USE_SERIAL.print("[HTTP] Memulai...\n");
+    http.begin( url + 2 + "&ketinggian=" + level);
+    delay(2000);
+    USE_SERIAL.print("[HTTP] Melakukan GET ke server...\n");
+    int httpCode = http.GET();
+    if(httpCode > 0) {
+      USE_SERIAL.printf("[HTTP] kode response GET: %d\n", httpCode);
+        if(httpCode == HTTP_CODE_OK) {
+           payload = http.getString();
+           USE_SERIAL.println(payload);
+          }
+    } else { 
+      USE_SERIAL.printf("[HTTP] GET gagal, error: %s\n", http.errorToString(httpCode).c_str());
+      }
+    http.end();
     }
- 
-    delay(5000);
-}
+  delay(5000);
+  }
+
+void gotoSleep(){
+  ESP.deepSleep(1000000 * sleepInterval);
+  }
+void loop(){
+  }
